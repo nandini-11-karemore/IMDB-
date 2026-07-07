@@ -1,92 +1,118 @@
-
 import streamlit as st
 import pickle
 import re
+import nltk
+
+# Download required NLTK data (only runs once)
+nltk.download("punkt", quiet=True)
+nltk.download("stopwords", quiet=True)
+nltk.download("wordnet", quiet=True)
+nltk.download("omw-1.4", quiet=True)
+
 from nltk.corpus import stopwords
 from nltk.stem import WordNetLemmatizer
 from nltk.tokenize import word_tokenize
 
-# --- Page Configuration ---
-st.set_page_config(page_title="IMDB Sentiment Analyzer", page_icon="🎬")
+# -----------------------------
+# Page Configuration
+# -----------------------------
+st.set_page_config(
+    page_title="IMDB Sentiment Analyzer",
+    page_icon="🎬",
+    layout="centered"
+)
 
-# --- Load Model and Vectorizer ---
-@st.cache_resource # Cache the model loading for performance
+# -----------------------------
+# Load Model & Vectorizer
+# -----------------------------
+@st.cache_resource
 def load_resources():
-    # Load the TF-IDF vectorizer
     try:
-        with open('tfidf_vectorizer.pkl', 'rb') as file:
-            loaded_vectorizer = pickle.load(file)
-    except FileNotFoundError:
-        st.error("TF-IDF Vectorizer file not found! Please ensure 'tfidf_vectorizer.pkl' is in the same directory.")
-        st.stop()
+        with open("tfidf_vectorizer.pkl", "rb") as f:
+            vectorizer = pickle.load(f)
 
-    # Load the Logistic Regression model
-    try:
-        with open('logistic_regression_model.pkl', 'rb') as file:
-            loaded_model = pickle.load(file)
-    except FileNotFoundError:
-        st.error("Model file not found! Please ensure 'logistic_regression_model.pkl' is in the same directory.")
+        with open("logistic_regression_model.pkl", "rb") as f:
+            model = pickle.load(f)
+
+        return vectorizer, model
+
+    except FileNotFoundError as e:
+        st.error(f"Missing file: {e}")
         st.stop()
-    return loaded_vectorizer, loaded_model
 
 tfidf_vectorizer, logistic_model = load_resources()
 
-# --- Text Preprocessing Functions (must match training preprocessing) ---
-# Ensure NLTK data is available in the Streamlit environment if running standalone
-# This part assumes NLTK data is already downloaded or will be handled by the environment setup.
-# For Colab, we handled this in a previous cell.
-stop_words = set(stopwords.words('english'))
+# -----------------------------
+# Preprocessing
+# -----------------------------
+stop_words = set(stopwords.words("english"))
 lemmatizer = WordNetLemmatizer()
 
 def preprocess_text(text):
-    # Tokenization
-    tokens = word_tokenize(text.lower())
-    
-    # Remove non-alphabetic tokens and stopwords
-    filtered_tokens = [word for word in tokens if word.isalpha() and word not in stop_words]
-    
-    # Lemmatization
-    lemmatized_tokens = [lemmatizer.lemmatize(word) for word in filtered_tokens]
-    
-    return ' '.join(lemmatized_tokens)
+    # Lowercase
+    text = text.lower()
 
-# --- Streamlit UI ---
-st.title('🎬 IMDB Movie Review Sentiment Analyzer')
-st.markdown("Enter a movie review below, and I'll tell you if it's **positive** or **negative**!")
+    # Remove punctuation and numbers
+    text = re.sub(r"[^a-zA-Z\s]", " ", text)
 
-review_placeholder = "e.g., 'This movie was absolutely fantastic! The acting was superb and the story kept me on the edge of my seat.'"
-review_input = st.text_area(
-    'Your Movie Review:', 
-    height=200, 
-    placeholder=review_placeholder
+    # Tokenize
+    tokens = word_tokenize(text)
+
+    # Remove stopwords and non-alpha tokens
+    tokens = [
+        lemmatizer.lemmatize(word)
+        for word in tokens
+        if word.isalpha() and word not in stop_words
+    ]
+
+    return " ".join(tokens)
+
+# -----------------------------
+# UI
+# -----------------------------
+st.title("🎬 IMDB Movie Review Sentiment Analyzer")
+
+st.write(
+    "Enter a movie review below and the model will predict "
+    "**Positive 😊** or **Negative 😞** sentiment."
 )
 
-if st.button('Predict Sentiment ✨'):
-    if review_input:
-        with st.spinner('Analyzing sentiment...'):
-            # Preprocess the input review
-            processed_review = preprocess_text(review_input)
+review = st.text_area(
+    "Movie Review",
+    height=200,
+    placeholder="Example: This movie was amazing! I loved every minute of it."
+)
 
-            # Transform using the loaded TF-IDF vectorizer
-            tfidf_review = tfidf_vectorizer.transform([processed_review])
+if st.button("Predict Sentiment 🚀"):
 
-            # Make prediction
-            prediction = logistic_model.predict(tfidf_review)
-            prediction_proba = logistic_model.predict_proba(tfidf_review)
+    if review.strip() == "":
+        st.warning("Please enter a movie review.")
+        st.stop()
 
-            st.subheader('Prediction Result:')
-            if prediction[0] == 'positive':
-                st.success(f'✨ This review is **Positive**! (Confidence: {prediction_proba[0][1]:.2%})')
-            else:
-                st.error(f'💔 This review is **Negative**! (Confidence: {prediction_proba[0][0]:.2%})')
+    with st.spinner("Analyzing..."):
 
-            # Optional: Show processed text (can be toggled for debugging)
-            # with st.expander("See processed text and debug info"): # Example of expander for optional debug
-            #     st.write(f'Original Review (first 100 chars): {review_input[:100]}...')
-            #     st.write(f'Processed Review (first 100 chars): {processed_review[:100]}...')
-            #     st.write(f'TF-IDF Shape: {tfidf_review.shape}')
+        processed = preprocess_text(review)
+
+        vector = tfidf_vectorizer.transform([processed])
+
+        prediction = logistic_model.predict(vector)[0]
+
+        probabilities = logistic_model.predict_proba(vector)[0]
+        confidence = probabilities.max()
+
+    st.divider()
+
+    st.subheader("Prediction")
+
+    # Works whether labels are strings or integers
+    if str(prediction).lower() in ["positive", "1"]:
+        st.success(f"😊 Positive Review\n\nConfidence: {confidence:.2%}")
+        st.balloons()
     else:
-        st.warning('Please enter some text in the review box to predict its sentiment.')
+        st.error(f"😞 Negative Review\n\nConfidence: {confidence:.2%}")
 
-st.markdown("---")
-st.info("This app uses a Logistic Regression model trained on the IMDB Movie Review Dataset.")
+st.divider()
+
+st.caption(
+    "Built using Logistic Regression + TF-IDF Vectorizer trained on the IMDB Movie Review Dataset."
+)
